@@ -1,0 +1,14 @@
+# README FILE #
+step 1: Extract weight matrix from IBD model
+	Because IBD model is from Sung, which works as a 'software', we have to extract weight matrix from its data.
+	SCRIPT extract_ibd_prs_weight.R
+
+step 2: Use LD to annotate credible regions for SNPs in PRS model
+	I provide an example to do this for T1D model. We should first generate SNPS.txt to fulfill the input format and then use LD-annot for annotation.You can change the vcf files as listed in DATA/LDannotation/ to annotate SNPs from other models.
+	SCRIPT LD_annotation.sh
+
+step 3: GSEA analysis for the SNPs.
+	Genes were ranked by gene level score, which is sum(|weight| * N), where N = number of alleles in NEER for each SNP.
+	DATABASEs for GSEA are in DATA/ref/
+	SCRIPT PRS_GSEA.R
+	You have to rerun the code to get the GSEA results or you can find GSEA.pptx in the OUTPUT/GSEA/ folder.

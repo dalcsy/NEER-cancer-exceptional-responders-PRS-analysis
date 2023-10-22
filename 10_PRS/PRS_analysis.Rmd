@@ -1,0 +1,464 @@
+---
+title: "PRS_analysis"
+author: "Siyuan Chen"
+date: "2022/3/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# PRS ANALYSIS
+### Important note ###
+# You may not be struggling with "OUT OF MEMORY" in R, even if you asked for 128GB RAM in O2.
+# I'm sorry that R is not memory friendly and the code is not good and fast enough.
+# My solution is to split the weight matrix and SNP matrix by every xxxxx lines calculate it separately.
+# You can get a sum finally.
+
+
+# HypoT model (Zia Khan, 2021 NC), NEER data
+# Shared SNPs were in /n/data1/hms/dbmi/zaklab/csy/PRS/HypoT/shared_snps_neer_pcawg.txt
+# Results for the hypoT model /n/data1/hms/dbmi/zaklab/csy/NEER_germline_project/10_PRS/OUTPUT/HypoT
+
+
+# We need first generate dataframe for PRS analysis.
+```{r}
+# LOAD data for PRS analysis
+setwd("../DATA/PRS/HypoT")
+Zia_hypoT_weights <- read.delim("LDpred2_hypoT_PRS.txt",header=T)
+Zia_hypoT_weights$hg38.chrom <- paste("chr",Zia_hypoT_weights$hg38.chrom,sep="")
+
+library(vcfR)
+NEER_prs_vcf <- read.vcfR("hypoT_PRS_NEER_no_multi_alt_hg38.vcf.gz")
+
+NEER_GT <- extract.gt(NEER_prs_vcf)
+NEER_GT <- as.data.frame(NEER_GT)
+NEER_GT <- cbind(NEER_prs_vcf@fix[,1:5],NEER_GT)
+NEER_PRS_df <- merge(Zia_hypoT_weights,NEER_GT,by.x = "ldref.id",by.y="ID")
+write.table(NEER_PRS_df,"../OUTPUT/HypoT/NEER_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+```
+
+
+# Note hg19 position for PCAWG, but hg38 position for NEER.
+```{r}
+# LOAD data for PRS analysis
+setwd("../DATA/PRS/HypoT")
+Zia_hypoT_weights <- read.delim("LDpred2_hypoT_PRS.txt",header=T)
+Zia_hypoT_weights$hg38.chrom <- paste("chr",Zia_hypoT_weights$hg38.chrom,sep="")
+Zia_hypoT_weights$chr_pos <- paste(Zia_hypoT_weights$hg19.chrom,Zia_hypoT_weights$hg19.pos,sep="_")
+
+library(vcfR)
+PCAWG_prs_vcf <- read.vcfR("hypoT_PRS_PCAWG_no_multi_alt_hg19.vcf.gz")
+PCAWG_GT <- extract.gt(PCAWG_prs_vcf)
+rm(PCAWG_prs_vcf)
+gc()
+PCAWG_GT <- as.data.frame(PCAWG_GT)
+write.table(PCAWG_GT,"./PCAWG_GT.txt",sep="\t",row.names=F,col.names=T,quote=F)
+gc()
+
+PCAWG_prs_vcf <- read.vcfR("hypoT_PRS_PCAWG_no_multi_alt_hg19.vcf.gz",cols = 5)
+gc()
+PCAWG_GT <- cbind(PCAWG_prs_vcf@fix[,1:5],PCAWG_GT)
+gc()
+PCAWG_GT$chr_pos <- paste(PCAWG_GT$CHROM,PCAWG_GT$POS,sep="_")
+gc()
+write.table(PCAWG_GT,"./PCAWG_GT_anno.txt",sep="\t",row.names=F,col.names=T,quote=F)
+gc()
+
+PCAWG_PRS_df <- merge(Zia_hypoT_weights,PCAWG_GT,by = "chr_pos")
+write.table(PCAWG_PRS_df,"/n/data1/hms/dbmi/zaklab/csy/PRS/Zia_khan_model/PCAWG_PRS_df_final.txt",sep="\t",row.names=F,col.names=T,quote=F)
+```
+
+
+
+# Write a function to calculate PRS
+# NOTE: Because the column names for the weight matrices of each model may be different, you may need to revise a little to let it work for different models.
+```{r}
+calculate_prs <- function(GT_df,cohort){
+  # use a tag to grep sample GT data
+  if(cohort=="NEER"){
+    search_header <- "er"
+  }else if(cohort=="PCAWG"){
+    search_header <- "pcawg"
+  }else if(cohort=="TCGA"){
+    search_header <- "TCGA"
+  }
+  
+  GT_df[is.na(GT_df)] <- 0
+  
+  # Calculate PRS score when ref allele being the effect allele
+  GT_df$REF_effect <- GT_df$REF==GT_df$effect_allele
+  GT_df_ref <- GT_df[GT_df$REF_effect==T,]
+  if(nrow(GT_df_ref)!=0){
+    GT_df_ref[is.na(GT_df_ref)] <- 0
+    GT_df_ref[GT_df_ref=="0|0"|GT_df_ref=="0/0"] <- 2
+    GT_df_ref[GT_df_ref=="0|1"|GT_df_ref=="0/1"|GT_df_ref=="1|0"|GT_df_ref=="1/0"] <- 1
+    GT_df_ref[GT_df_ref=="1|1"|GT_df_ref=="1/1"] <- 0
+  
+    GT_df_ref_num <- as.data.frame(lapply(GT_df_ref[,grep(search_header,colnames(GT_df_ref))],as.numeric))
+  
+    prs_ref <- t(GT_df_ref$effect_weight) %*%  as.matrix(GT_df_ref_num)
+  }
+  print("REF allele effect PRS score calculated.")
+  
+  # Calculate PRS score when alt allele being the effect allele
+  GT_df$ALT_effect <- GT_df$ALT==GT_df$effect_allele
+  
+  GT_df_alt <- GT_df[GT_df$ALT_effect==T,]
+  if(nrow(GT_df_alt)!=0){
+    GT_df_alt[GT_df_alt=="0|0"|GT_df_alt=="0/0"] <- 0
+    GT_df_alt[GT_df_alt=="0|1"|GT_df_alt=="0/1"|GT_df_alt=="1|0"|GT_df_alt=="1/0"] <- 1
+    GT_df_alt[GT_df_alt=="1|1"|GT_df_alt=="1/1"] <- 2
+    
+    GT_df_alt_num <- as.data.frame(lapply(GT_df_alt[,grep(search_header,colnames(GT_df_alt))],as.numeric))
+    prs_alt <- t(GT_df_alt$effect_weight) %*%  as.matrix(GT_df_alt_num)
+  }
+  
+  print("ALT allele effect PRS score calculated.")
+  
+  if(nrow(GT_df_ref)==0){
+    return(prs_alt)
+  }else if(nrow(GT_df_alt)==0){
+    return(prs_ref)
+  }else{
+  
+    return(prs_ref+prs_alt)
+  }
+}
+```
+
+# Calculate HypoT PRS for NEER.
+```{r}
+# Get shared variants PRS df
+NEER_PRS_df <- read.delim("../OUTPUT/HypoT/NEER_PRS_df.txt",header=T,stringsAsFactors = F)
+shared_variants <- read.delim("../OUTPUT/HypoT/shared_snps_neer_pcawg.txt",header=F,stringsAsFactors = F)
+NEER_PRS_df <- NEER_PRS_df[NEER_PRS_df$ldref.id%in%shared_variants$V1,]
+
+# Calculate PRS scores
+NEER_PRS_res <- as.data.frame(calculate_prs(NEER_PRS_df,cohort="NEER"))
+
+# Saved
+write.table(NEER_PRS_res,"../OUTPUT/HypoT/NEER_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+```
+# Calculate HypoT PRS for PCAWG.
+```{r}
+# Get shared variants PRS df
+PCAWG_PRS_df <- read.delim("../OUTPUT/HypoT/PCAWG_PRS_df_final.txt",header=T,stringsAsFactors = F)
+shared_variants <- read.delim("../OUTPUT/HypoT/shared_snps_neer_pcawg.txt",header=F,stringsAsFactors = F)
+PCAWG_PRS_df <- PCAWG_PRS_df[PCAWG_PRS_df$ldref.id%in%shared_variants$V1,]
+
+# Calculate PRS scores
+PCAWG_PRS_res <- as.data.frame(calculate_prs(PCAWG_PRS_df,cohort="PCAWG"))
+
+# Saved
+write.table(PCAWG_PRS_res,"../OUTPUT/HypoT/PCAWG_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+```
+
+# Calculate T1D PRS
+# https://www.nature.com/articles/s41588-021-00948-2
+
+# We generate a bed file first from the weight file and then extract SNPs from vcf file through bcftools.
+```{r}
+PRS_weight <- read.delim("../DATA/PRS/T1D/PGS000833.txt/PGS000833.txt",header=T,stringsAsFactors = F,skip = 14)
+head(PRS_weight)
+T1D_PRS_BED <- data.frame(PRS_weight$chr_name,PRS_weight$chr_position-1,PRS_weight$chr_position)
+write.table(T1D_PRS_BED,"../OUTPUT/T1D/T1D_PRS_weight.bed",quote=F,row.names=F,col.names=F,sep="\t")
+```
+# Generate dataframe for PRS calculation
+```{r}
+# Load data
+T1D_weights <- read.delim("../DATA/PRS/T1D/PGS000833.txt/PGS000833.txt",header=T,skip=14)
+
+library(vcfR)
+NEER_prs_vcf <- read.vcfR("../DATA/PRS/T1D/NEER_T1D_snps.vcf.gz")
+
+NEER_GT <- extract.gt(NEER_prs_vcf)
+NEER_GT <- as.data.frame(NEER_GT)
+NEER_GT <- cbind(NEER_prs_vcf@fix[,1:5],NEER_GT)
+NEER_GT$ID <- paste(NEER_GT$CHROM,NEER_GT$POS,sep=":")
+row.names(T1D_weights) <- paste(T1D_weights$chr_name,T1D_weights$chr_position,sep=":")
+NEER_PRS_df <- merge(T1D_weights,NEER_GT,by.x = "row.names",by.y="ID")
+head(NEER_PRS_df)
+write.table(NEER_PRS_df,"../OUTPUT/T1D/NEER_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+
+PCAWG_prs_vcf <- read.vcfR("../DATA/PRS/T1D/PCAWG_T1D_snps.vcf.gz")
+
+PCAWG_GT <- extract.gt(PCAWG_prs_vcf)
+PCAWG_GT <- as.data.frame(PCAWG_GT)
+colnames(PCAWG_GT) <- paste("pcawg",colnames(PCAWG_GT),sep="-")
+PCAWG_GT <- cbind(PCAWG_prs_vcf@fix[,1:5],PCAWG_GT)
+PCAWG_GT$ID <- paste(PCAWG_GT$CHROM,PCAWG_GT$POS,sep=":")
+row.names(T1D_weights) <- paste(T1D_weights$chr_name,T1D_weights$chr_position,sep=":")
+PCAWG_PRS_df <- merge(T1D_weights,PCAWG_GT,by.x = "row.names",by.y="ID")
+head(PCAWG_PRS_df)
+write.table(PCAWG_PRS_df,"../OUTPUT/T1D/PCAWG_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+```
+
+# Calculate T1D PRS
+```{r}
+# Get shared variants PRS df
+NEER_PRS_df <- read.delim("../OUTPUT/T1D/NEER_PRS_df.txt",header=T,stringsAsFactors = F)
+shared_variants <- intersect(NEER_PRS_df$Row.names,PCAWG_PRS_df$Row.names)
+NEER_PRS_df <- NEER_PRS_df[NEER_PRS_df$Row.names%in%shared_variants,]
+
+# Calculate PRS scores
+NEER_PRS_res <- as.data.frame(calculate_prs(NEER_PRS_df,cohort="NEER"))
+
+# Saved
+write.table(NEER_PRS_res,"../OUTPUT/T1D/NEER_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+
+# Get shared variants PRS df
+PCAWG_PRS_df <- read.delim("../OUTPUT/T1D/PCAWG_PRS_df.txt",header=T,stringsAsFactors = F)
+PCAWG_PRS_df <- PCAWG_PRS_df[PCAWG_PRS_df$Row.names %in% shared_variants,]
+
+# Calculate PRS scores
+PCAWG_PRS_res <- as.data.frame(calculate_prs(PCAWG_PRS_df,cohort="PCAWG"))
+
+# Saved
+write.table(PCAWG_PRS_res,"../OUTPUT/T1D/PCAWG_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+```
+
+
+
+# Calculate Multi_scle PRS
+# https://www.nature.com/articles/s41431-021-00914-w
+# We generate a bed file first from the weight file and then extract SNPs from vcf file through bcftools.
+
+```{r}
+PRS_weight <- read.delim("../DATA/PRS/Multi_scle/PGS000809.txt/PGS000809.txt",header=T,stringsAsFactors = F,skip = 14)
+head(PRS_weight)
+Multi_scle_PRS_BED <- data.frame(PRS_weight$chr_name,PRS_weight$chr_position-1,PRS_weight$chr_position)
+write.table(Multi_scle_PRS_BED,"../OUTPUT/Multi_scle/Multi_scle_PRS_weight.bed",quote=F,row.names=F,col.names=F,sep="\t")
+```
+# Generate dataframe for PRS calculation
+```{r}
+# Load data
+Multi_scle_weights <- read.delim("../DATA/Multi_scle/PGS000809.txt/PGS000809.txt",header=T,skip=14)
+
+library(vcfR)
+NEER_prs_vcf <- read.vcfR("../DATA/Multi_scle/NEER_Multi_scle_snps.vcf.gz")
+
+NEER_GT <- extract.gt(NEER_prs_vcf)
+NEER_GT <- as.data.frame(NEER_GT)
+NEER_GT <- cbind(NEER_prs_vcf@fix[,1:5],NEER_GT)
+NEER_GT$ID <- paste(NEER_GT$CHROM,NEER_GT$POS,sep=":")
+row.names(Multi_scle_weights) <- paste(Multi_scle_weights$chr_name,Multi_scle_weights$chr_position,sep=":")
+NEER_PRS_df <- merge(Multi_scle_weights,NEER_GT,by.x = "row.names",by.y="ID")
+head(NEER_PRS_df)
+write.table(NEER_PRS_df,"../OUTPUT/Multi_scle/NEER_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+
+PCAWG_prs_vcf <- read.vcfR("../DATA/Multi_scle/PCAWG_Multi_scle_snps.vcf.gz")
+
+PCAWG_GT <- extract.gt(PCAWG_prs_vcf)
+PCAWG_GT <- as.data.frame(PCAWG_GT)
+colnames(PCAWG_GT) <- paste("pcawg",colnames(PCAWG_GT),sep="-")
+PCAWG_GT <- cbind(PCAWG_prs_vcf@fix[,1:5],PCAWG_GT)
+PCAWG_GT$ID <- paste(PCAWG_GT$CHROM,PCAWG_GT$POS,sep=":")
+row.names(Multi_scle_weights) <- paste(Multi_scle_weights$chr_name,Multi_scle_weights$chr_position,sep=":")
+PCAWG_PRS_df <- merge(Multi_scle_weights,PCAWG_GT,by.x = "row.names",by.y="ID")
+head(PCAWG_PRS_df)
+write.table(PCAWG_PRS_df,"../OUTPUT/Multi_scle/PCAWG_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+```
+
+# Calculate Multi_scle PRS
+```{r}
+# Get shared variants PRS df
+NEER_PRS_df <- read.delim("../OUTPUT/Multi_scle/NEER_PRS_df.txt",header=T,stringsAsFactors = F)
+shared_variants <- intersect(NEER_PRS_df$Row.names,PCAWG_PRS_df$Row.names)
+NEER_PRS_df <- NEER_PRS_df[NEER_PRS_df$Row.names%in%shared_variants,]
+
+# Calculate PRS scores
+NEER_PRS_res <- as.data.frame(calculate_prs(NEER_PRS_df,cohort="NEER"))
+
+# Saved
+write.table(NEER_PRS_res,"../OUTPUT/Multi_scle/NEER_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+
+# Get shared variants PRS df
+PCAWG_PRS_df <- read.delim("../OUTPUT/Multi_scle/PCAWG_PRS_df.txt",header=T,stringsAsFactors = F)
+PCAWG_PRS_df <- PCAWG_PRS_df[PCAWG_PRS_df$Row.names %in% shared_variants,]
+
+# Calculate PRS scores
+PCAWG_PRS_res <- as.data.frame(calculate_prs(PCAWG_PRS_df,cohort="PCAWG"))
+
+# Saved
+write.table(PCAWG_PRS_res,"../OUTPUT/Multi_scle/PCAWG_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+```
+
+# Calculate Psoriasis PRS
+# https://www.cell.com/ajhg/fulltext/S0002-9297(21)00420-1
+# We generate a bed file first from the weight file and then extract SNPs from vcf file through bcftools.
+
+```{r}
+PRS_weight <- read.delim("../DATA/Psoriasis/PGS001871.txt",header=T,stringsAsFactors = F,skip = 14)
+head(PRS_weight)
+Psoriasis_PRS_BED <- data.frame(PRS_weight$chr_name,PRS_weight$chr_position-1,PRS_weight$chr_position)
+write.table(Psoriasis_PRS_BED,"../OUTPUT/Psoriasis/Psoriasis_PRS_weight.bed",quote=F,row.names=F,col.names=F,sep="\t")
+```
+
+# Generate dataframe for PRS calculation
+
+```{r}
+# Load data
+Psoriasis_weights <- read.delim("../DATA/PRS/Psoriasis/PGS002083.txt",header=T,skip=14)
+
+library(vcfR)
+NEER_prs_vcf <- read.vcfR("../DATA/PRS/Psoriasis/NEER_Psoriasis_snps.vcf.gz")
+
+NEER_GT <- extract.gt(NEER_prs_vcf)
+NEER_GT <- as.data.frame(NEER_GT)
+NEER_GT <- cbind(NEER_prs_vcf@fix[,1:5],NEER_GT)
+NEER_GT$ID <- paste(NEER_GT$CHROM,NEER_GT$POS,sep=":")
+row.names(Psoriasis_weights) <- paste(Psoriasis_weights$chr_name,Psoriasis_weights$chr_position,sep=":")
+NEER_PRS_df <- merge(Psoriasis_weights,NEER_GT,by.x = "row.names",by.y="ID")
+head(NEER_PRS_df)
+write.table(NEER_PRS_df,"../OUTPUT/Psoriasis/NEER_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+
+PCAWG_prs_vcf <- read.vcfR("../DATA/PRS/Psoriasis/PCAWG_Psoriasis_snps.vcf.gz")
+
+PCAWG_GT <- extract.gt(PCAWG_prs_vcf)
+PCAWG_GT <- as.data.frame(PCAWG_GT)
+colnames(PCAWG_GT) <- paste("pcawg",colnames(PCAWG_GT),sep="-")
+PCAWG_GT <- cbind(PCAWG_prs_vcf@fix[,1:5],PCAWG_GT)
+PCAWG_GT$ID <- paste(PCAWG_GT$CHROM,PCAWG_GT$POS,sep=":")
+row.names(Psoriasis_weights) <- paste(Psoriasis_weights$chr_name,Psoriasis_weights$chr_position,sep=":")
+PCAWG_PRS_df <- merge(Psoriasis_weights,PCAWG_GT,by.x = "row.names",by.y="ID")
+head(PCAWG_PRS_df)
+write.table(PCAWG_PRS_df,"../OUTPUT/Psoriasis/PCAWG_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+```
+
+# Calculate Psoriasis PRS
+```{r}
+# Get shared variants PRS df
+NEER_PRS_df <- read.delim("../OUTPUT/Psoriasis/NEER_PRS_df.txt",header=T,stringsAsFactors = F)
+shared_variants <- intersect(NEER_PRS_df$Row.names,PCAWG_PRS_df$Row.names)
+NEER_PRS_df <- NEER_PRS_df[NEER_PRS_df$Row.names%in%shared_variants,]
+
+# Calculate PRS scores
+NEER_PRS_res <- as.data.frame(calculate_prs(NEER_PRS_df,cohort="NEER"))
+
+# Saved
+write.table(NEER_PRS_res,"../OUTPUT/Psoriasis/NEER_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+
+# Get shared variants PRS df
+PCAWG_PRS_df <- read.delim("../OUTPUT/Psoriasis/PCAWG_PRS_df.txt",header=T,stringsAsFactors = F)
+PCAWG_PRS_df <- PCAWG_PRS_df[PCAWG_PRS_df$Row.names %in% shared_variants,]
+
+# Calculate PRS scores
+PCAWG_PRS_res <- as.data.frame(calculate_prs(PCAWG_PRS_df,cohort="PCAWG"))
+
+# Saved
+write.table(PCAWG_PRS_res,"../OUTPUT/Psoriasis/PCAWG_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+```
+
+
+# Calculate Rheumatoid_arthritis PRS
+# https://www.cell.com/ajhg/fulltext/S0002-9297(21)00420-1
+
+```{r}
+PRS_weight <- read.delim("../DATA/PRS/Rheumatoid_arthritis/PGS001875.txt/PGS001875.txt",header=T,stringsAsFactors = F,skip = 14)
+head(PRS_weight)
+Rheumatoid_arthritis_PRS_BED <- data.frame(PRS_weight$chr_name,PRS_weight$chr_position-1,PRS_weight$chr_position)
+write.table(Rheumatoid_arthritis_PRS_BED,"../OUTPUT/Rheumatoid_arthritis/Rheumatoid_arthritis_PRS_weight.bed",quote=F,row.names=F,col.names=F,sep="\t")
+```
+
+
+```{r}
+# Load data
+Rheumatoid_arthritis_weights <- read.delim("../DATA/PRS/Rheumatoid_arthritis/PGS001875.txt/PGS001875.txt",header=T,skip=14)
+
+library(vcfR)
+NEER_prs_vcf <- read.vcfR("../DATA/PRS/Rheumatoid_arthritis/NEER_Rheumatoid_arthritis_snps.vcf.gz")
+
+NEER_GT <- extract.gt(NEER_prs_vcf)
+NEER_GT <- as.data.frame(NEER_GT)
+NEER_GT <- cbind(NEER_prs_vcf@fix[,1:5],NEER_GT)
+NEER_GT$ID <- paste(NEER_GT$CHROM,NEER_GT$POS,sep=":")
+row.names(Rheumatoid_arthritis_weights) <- paste(Rheumatoid_arthritis_weights$chr_name,Rheumatoid_arthritis_weights$chr_position,sep=":")
+NEER_PRS_df <- merge(Rheumatoid_arthritis_weights,NEER_GT,by.x = "row.names",by.y="ID")
+head(NEER_PRS_df)
+write.table(NEER_PRS_df,"../OUTPUT/Rheumatoid_arthritis/NEER_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+
+PCAWG_prs_vcf <- read.vcfR("../DATA/PRS/Rheumatoid_arthritis/PCAWG_Rheumatoid_arthritis_snps.vcf.gz")
+
+PCAWG_GT <- extract.gt(PCAWG_prs_vcf)
+PCAWG_GT <- as.data.frame(PCAWG_GT)
+colnames(PCAWG_GT) <- paste("pcawg",colnames(PCAWG_GT),sep="-")
+PCAWG_GT <- cbind(PCAWG_prs_vcf@fix[,1:5],PCAWG_GT)
+PCAWG_GT$ID <- paste(PCAWG_GT$CHROM,PCAWG_GT$POS,sep=":")
+row.names(Rheumatoid_arthritis_weights) <- paste(Rheumatoid_arthritis_weights$chr_name,Rheumatoid_arthritis_weights$chr_position,sep=":")
+PCAWG_PRS_df <- merge(Rheumatoid_arthritis_weights,PCAWG_GT,by.x = "row.names",by.y="ID")
+head(PCAWG_PRS_df)
+write.table(PCAWG_PRS_df,"../OUTPUT/Rheumatoid_arthritis/PCAWG_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+```
+
+# Calculate Rheumatoid_arthritis PRS
+```{r}
+# Get shared variants PRS df
+NEER_PRS_df <- read.delim("../OUTPUT/Rheumatoid_arthritis/NEER_PRS_df.txt",header=T,stringsAsFactors = F)
+shared_variants <- intersect(NEER_PRS_df$Row.names,PCAWG_PRS_df$Row.names)
+NEER_PRS_df <- NEER_PRS_df[NEER_PRS_df$Row.names%in%shared_variants,]
+
+# Calculate PRS scores
+NEER_PRS_res <- as.data.frame(calculate_prs(NEER_PRS_df,cohort="NEER"))
+
+# Saved
+write.table(NEER_PRS_res,"../OUTPUT/Rheumatoid_arthritis/NEER_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+
+# Get shared variants PRS df
+PCAWG_PRS_df <- read.delim("../OUTPUT/Rheumatoid_arthritis/PCAWG_PRS_df.txt",header=T,stringsAsFactors = F)
+PCAWG_PRS_df <- PCAWG_PRS_df[PCAWG_PRS_df$Row.names %in% shared_variants,]
+
+# Calculate PRS scores
+PCAWG_PRS_res <- as.data.frame(calculate_prs(PCAWG_PRS_df,cohort="PCAWG"))
+
+# Saved
+write.table(PCAWG_PRS_res,"../OUTPUT/PCAWG_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+```
+
+# TCGA T1D PRS
+# Calculate T1D PRS
+# https://www.nature.com/articles/s41588-021-00948-2
+
+
+```{r}
+# Load data
+T1D_weights <- read.delim("../DATA/PRS/T1D/PGS000833.txt/PGS000833.txt",header=T,skip=14)
+
+TCGA_prs_vcf <- read.vcfR("../DATA/PRS/T1D/TCGA_T1D_snps.vcf.gz")
+
+TCGA_GT <- extract.gt(TCGA_prs_vcf)
+TCGA_GT <- as.data.frame(TCGA_GT)
+colnames(TCGA_GT) <- paste("TCGA",colnames(TCGA_GT),sep="-")
+TCGA_GT <- cbind(TCGA_prs_vcf@fix[,1:5],TCGA_GT)
+TCGA_GT$ID <- paste(TCGA_GT$CHROM,TCGA_GT$POS,sep=":")
+row.names(T1D_weights) <- paste(T1D_weights$chr_name,T1D_weights$chr_position,sep=":")
+TCGA_PRS_df <- merge(T1D_weights,TCGA_GT,by.x = "row.names",by.y="ID")
+head(TCGA_PRS_df)
+write.table(TCGA_PRS_df,"../OUTPUT/T1D/TCGA_PRS_df.txt",sep="\t",row.names=F,col.names=T,quote=F)
+
+```
+
+# Calculate T1D PRS
+```{r}
+
+# Get shared variants PRS df
+TCGA_PRS_df <- read.delim("../OUTPUT/T1D/TCGA_PRS_df.txt",header=T,stringsAsFactors = F)
+TCGA_PRS_df <- TCGA_PRS_df[TCGA_PRS_df$Row.names %in% shared_variants,]
+
+# Calculate PRS scores
+TCGA_PRS_res <- as.data.frame(calculate_prs(TCGA_PRS_df,cohort="TCGA"))
+
+# Saved
+write.table(TCGA_PRS_res,"../OUTPUT/T1D/TCGA_PRS_res.txt",sep="\t",quote=F,row.names=F,col.names=T)
+```
+
+

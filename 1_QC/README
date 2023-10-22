@@ -1,0 +1,5 @@
+# README FILE #
+step 1: VQSR QC filtering
+	SCRIPT: apply_vqsr.sh
+step 2: QC filtering by bcftools and vcftools
+	SCRIPT: QC.sh

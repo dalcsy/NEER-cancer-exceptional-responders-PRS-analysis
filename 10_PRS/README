@@ -1,0 +1,16 @@
+# README FILE #
+PRS analysis
+
+Step 1:	IBD model was from Sung(Shamil's lab).
+	GITHUB:https://github.com/sgchun/nps
+	PAPER:https://www.cell.com/ajhg/fulltext/S0002-9297(20)30151-8
+	SCRIPT PRS_to_bgan.sh first and then cal_prs_ibd.sh
+	MODEL: ibd.npsdat/
+	It was done for NEER, PCAWG and TCGA separately. So, there were 6 scripts in the SCRIPT directory.
+	Outputs were in OUTPUT/IBD_PRS/
+
+Step 2: Subset vcf files of NEER, PCAWG, TCGA based on SNPs in weight matrices.
+	AN EXAMPLE SCRIPT: subset_vcf_for_PRS.sh
+
+Step 3: Other 5 models
+	SCRIPT: PRS_analysis.Rmd

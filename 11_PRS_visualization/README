@@ -1,0 +1,5 @@
+# README FILE #
+PRS analysis visualization. Including distribution plots of all models, calculating p values, different distributions in related cancer types, survival analysis in PCAWG and TCGA.
+	SCRIPT: PRS_visualization.R
+
+

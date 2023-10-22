@@ -1,0 +1,14 @@
+# README FILE #
+step 1: split the vcf file by chromosomes
+	SCRIPTS: vcf_chr_split.sh
+step 2: create a folder called "imputation_input"
+	move all autosomal chromosomes vcf files into this folder as input of imputation and liftover.
+step 3: imputation and liftover.
+	It was done by michigan imputation server (https://imputationserver.sph.umich.edu/).
+	Reference: Genotype Imputation (Minimac4), HRC r1.1 2016(GRCh37/hg19)
+	Results in OUTPUT/neer_imputed_vqsr_no_multi_alt_GQ20/
+step 4: After imputation QC
+	SCRIPTS: after_imputation_QC.sh
+step 5: Concat split vcf files into one and sort the vcf file.
+	SCRIPTS: concat_vcffiles_after_imputation.sh 
+	
